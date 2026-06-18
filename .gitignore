@@ -1,0 +1,21 @@
+```gitignore
+# Visual Studio
+.vs/
+
+# Build results
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+
+# Logs
+*.log
+
+# Rider
+.idea/
+
+# VS Code
+.vscode/
+```
