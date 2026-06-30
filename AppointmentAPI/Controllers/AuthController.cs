@@ -2,6 +2,7 @@
 using AppointmentAPI.DTOs;
 using AppointmentAPI.Models;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -45,6 +46,37 @@ namespace AppointmentAPI.Controllers
                 message = "User registered successfully",
                 user.Id,
                 user.Email
+            });
+        }
+
+        [HttpPost("login")]
+        public async Task<IActionResult> Login(LoginRequest request)
+        {
+            var user = await _context.Users
+                .FirstOrDefaultAsync(u => u.Email == request.Email);
+
+            if (user == null)
+            {
+                return BadRequest("Invalid credentials");
+            }
+
+            var result = _passwordHasher.VerifyHashedPassword(
+                user,
+                user.PasswordHash,
+                request.Password);
+
+            if (result == PasswordVerificationResult.Failed)
+            {
+                return BadRequest("Invalid credentials");
+            }
+
+            return Ok(new
+            {
+                Message = "Login successful",
+                UserId = user.Id,
+                Name = user.Name,
+                Email = user.Email,
+                Role = user.Role
             });
         }
     }
