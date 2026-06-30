@@ -7,7 +7,7 @@ bin/
 obj/
 
 # User-specific files
-*.user
+
 *.suo
 
 # Logs
@@ -18,4 +18,9 @@ obj/
 
 # VS Code
 .vscode/
+
+## Archivos de configuración con credenciales locales
+*.user
+appsettings.Development.json
+launchSettings.json
 ```
