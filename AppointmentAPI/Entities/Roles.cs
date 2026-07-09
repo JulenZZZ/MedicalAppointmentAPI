@@ -1,4 +1,4 @@
-﻿namespace AppointmentAPI.Models
+﻿namespace AppointmentAPI.Entities
 {
     public class Roles
     {
