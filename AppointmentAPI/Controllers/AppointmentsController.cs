@@ -92,5 +92,71 @@ namespace AppointmentAPI.Controllers
                 return StatusCode(500, new { message = "Ocurrió un error al procesar la reserva de la cita." });
             }
         }
+        [HttpPut("{id}/cancel")]
+        [Authorize(Roles = "Admin,Patient")] // Ambos pueden cancelar, pero con diferentes reglas
+        public async Task<IActionResult> CancelAppointment(int id)
+        {
+            // 1. Obtener datos del usuario autenticado
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var userRoleClaim = User.FindFirst(ClaimTypes.Role)?.Value;
+
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int currentUserId))
+            {
+                return Unauthorized(new { message = "Token inválido o usuario no identificado." });
+            }
+
+            // 2. Buscar la cita junto con su TimeSlot y su Pago
+            var appointment = await _context.Appointments
+                .Include(a => a.TimeSlot)
+                .FirstOrDefaultAsync(a => a.Id == id);
+
+            if (appointment == null)
+            {
+                return NotFound(new { message = "La cita especificada no existe." });
+            }
+
+            // 3. VALIDACIÓN DE SEGURIDAD: 
+            // Si es un Paciente, verificar que la cita realmente le pertenezca
+            if (userRoleClaim == "Patient" && appointment.PatientId != currentUserId)
+            {
+                return Forbid(); // 403 Forbidden - No puedes cancelar citas de otros
+            }
+
+            if (appointment.Status == "Cancelled")
+            {
+                return BadRequest(new { message = "Esta cita ya se encuentra cancelada." });
+            }
+
+            // --- TRANSACCIÓN LÓGICA DE CANCELACIÓN ---
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                // A. Cambiar estado de la cita
+                appointment.Status = "Cancelled";
+
+                // B. Liberar el horario para que vuelva a estar disponible
+                if (appointment.TimeSlot != null)
+                {
+                    appointment.TimeSlot.IsAvailable = true;
+                }
+
+                // C. Buscar el pago asociado y marcarlo como reembolsado
+                var payment = await _context.Payments.FirstOrDefaultAsync(p => p.AppointmentId == appointment.Id);
+                if (payment != null)
+                {
+                    payment.Status = "Refunded";
+                }
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                return Ok(new { message = "Cita cancelada con éxito. El horario ha sido liberado y el pago reembolsado." });
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                return StatusCode(500, new { message = "Ocurrió un error al procesar la cancelación." });
+            }
+        }
     }
 }
