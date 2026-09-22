@@ -42,18 +42,27 @@ namespace AppointmentAPI
                     IssuerSigningKey = new SymmetricSecurityKey(key)
                 };
             });
-
+            builder.Services.AddCors(options =>
+            {
+                options.AddPolicy("AllowFrontend", builder =>
+                {
+                    builder.WithOrigins("http://localhost:4200")
+                    .AllowAnyMethod()
+                    .AllowAnyHeader();
+                });
+            });
             var app = builder.Build();
 
             // Ya no hay middlewares de Swagger aquí
 
             app.UseHttpsRedirection();
 
+            app.UseCors("AllowFrontend");
             app.UseAuthentication();
             app.UseAuthorization();
 
             app.MapControllers();
-            app.MapGet("/", () => "Hello World!");
+            app.MapGet("/", () => "Appointment API running!");
 
             app.Run();
         }

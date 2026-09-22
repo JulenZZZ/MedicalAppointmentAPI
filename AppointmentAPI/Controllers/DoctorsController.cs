@@ -4,6 +4,7 @@ using AppointmentAPI.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 
 namespace AppointmentAPI.Controllers
 {
@@ -28,23 +29,59 @@ namespace AppointmentAPI.Controllers
 
             return Ok(new { message = $"Médico {doctor.Name} creado exitosamente." });
         }
-        [HttpGet("{doctorId}/available-slots")]
+
+        [HttpGet]
         [Authorize(Roles = "Admin,Patient")]
-        public async Task<IActionResult> GetAvailableSlots(int doctorId, [FromQuery] DateTime date)
+        public async Task<ActionResult<IEnumerable<Doctor>>> GetAllAvailableDoctors([FromQuery] int? doctorId)
         {
-            // 1. Filtrar los slots por Médico, Fecha exacta y que estén DISPONIBLES
+            // Consulta en Entity Framework que devuelva todos los Doctprs con IsActive == true
+            var doctors = await _context.Doctors
+                .Where(t => t.IsActive)
+                .ToListAsync();
+
+            return Ok(doctors);
+        }
+
+        [HttpGet("available")]
+        [Authorize(Roles = "Admin,Patient")]
+        public async Task<ActionResult<IEnumerable<TimeSlotDto>>> GetAllAvailableTimeSlots([FromQuery] string? date)
+        {
+            // Consulta en Entity Framework que devuelva todos los TimeSlots con IsBooked == false
             var slots = await _context.TimeSlots
-                .Where(ts => ts.DoctorId == doctorId &&
-                             ts.Date == date.Date &&
-                             ts.IsAvailable == true)
+                .Include(t => t.Doctor)
+                .Where(t => t.IsAvailable)
+                .ToListAsync(); 
+
+            return Ok(slots);
+        }
+
+        [HttpGet("{doctorId}/available-timeslots")]
+        [Authorize(Roles = "Admin,Patient")]
+        public async Task<IActionResult> GetAvailableSlots(int doctorId, [FromQuery] DateTime? date)
+        {
+            // 1. Iniciar la consulta filtrando por Médico y que esté Disponible
+            var query = _context.TimeSlots
+                .Include(ts => ts.Doctor) // Importante incluir la relación para que ts.Doctor.Name no dé NullReferenceException
+                .Where(ts => ts.DoctorId == doctorId && ts.IsAvailable);
+
+            // 2. Filtrar por fecha SOLO SI el parámetro date fue enviado
+            if (date.HasValue)
+            {
+                var targetDate = date.Value.Date;
+                query = query.Where(ts => ts.Date.Date == targetDate);
+            }
+
+            var slots = await query
                 .OrderBy(ts => ts.StartTime)
                 .ToListAsync();
 
-            // 2. Mapear las entidades al DTO de salida
+            // 3. Mapear las entidades al DTO de salida
             var result = slots.Select(ts => new TimeSlotDto
             {
                 Id = ts.Id,
                 DoctorId = ts.DoctorId,
+                DoctorName = ts.Doctor.Name,
+                Specialization = ts.Doctor.Specialization,
                 Date = ts.Date.ToString("yyyy-MM-dd"),
                 StartTime = ts.StartTime.ToString(@"hh\:mm"), // Formatea el TimeSpan a "09:00"
                 EndTime = ts.EndTime.ToString(@"hh\:mm"),

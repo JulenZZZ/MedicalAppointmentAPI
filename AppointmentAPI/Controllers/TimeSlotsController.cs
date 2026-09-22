@@ -18,6 +18,7 @@ namespace AppointmentAPI.Controllers
             _context = context;
         }
 
+
         [HttpPost]
         public async Task<IActionResult> CreateTimeSlot([FromBody] CreateTimeSlotDto dto)
         {

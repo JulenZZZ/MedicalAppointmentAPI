@@ -28,7 +28,7 @@ namespace AppointmentAPI.Controllers
         }
 
         [HttpPost("register")]
-        public async Task<IActionResult> Register(RegisterDto request)
+        public async Task<IActionResult> Register([FromBody] RegisterDto request)
         {
             var userExists = await _context.Users
                 .AnyAsync(x => x.Email == request.Email);
