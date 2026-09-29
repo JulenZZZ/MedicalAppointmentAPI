@@ -20,8 +20,61 @@ namespace AppointmentAPI.Controllers
             _context = context;
         }
 
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetAppointmentById(int id)
+        {
+            var appointment = await _context.Appointments
+                .Include(a => a.TimeSlot)
+                .Include(a => a.Doctor)
+                .Include(a => a.Patient)
+                .FirstOrDefaultAsync(a => a.Id == id);
+
+            if (appointment == null) return NotFound();
+
+            return Ok(appointment);
+        }
+
+        [HttpGet("my-appointments")]
+        [Authorize(Roles = $"{Roles.Patient},{Roles.Admin}")]
+        public async Task<IActionResult> GetPatientAppointments()
+        {
+            // 1. Obtener Id del paciente desde el JWT
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int patientId))
+            {
+                return Unauthorized(new { message = "Usuario no autenticado correctamente." });
+            }
+
+            // 2. Consultar las citas del paciente con sus relaciones
+            var appointments = await _context.Appointments
+                .Include(a => a.TimeSlot)
+                .Include(a => a.Doctor)
+                .Where(a => a.PatientId == patientId)
+                .OrderByDescending(a => a.CreatedAt)
+                .Select(a => new AppointmentResponseDto
+                {
+                    Id = a.Id,
+                    TimeSlotId = a.TimeSlotId,
+                    DoctorId = a.DoctorId,
+                    DoctorName = a.Doctor != null ? a.Doctor.Name : "Doctor",
+                    Specialization = a.Doctor != null ? a.Doctor.Specialization : "General",
+                    PatientId = a.PatientId,
+                    PatientName = a.Patient != null ? a.Patient.Name : "Patient",
+                    Date = a.TimeSlot != null ? a.TimeSlot.Date.ToString("yyyy-MM-dd") : "",
+                    StartTime = a.TimeSlot != null ? a.TimeSlot.StartTime.ToString(@"hh\:mm") : "",
+                    EndTime = a.TimeSlot != null ? a.TimeSlot.EndTime.ToString(@"hh\:mm") : "",
+                    Status = a.Status,
+                    PaymentStatus = a.PaymentStatus,
+                    TransactionId = "TXN-" + a.Id.ToString("D8"),
+                    AmountPaid = 50.00m
+                })
+                .ToListAsync();
+
+            return Ok(appointments);
+        }
+
         [HttpPost]
-        public async Task<IActionResult> BookAppointment([FromBody] CreateAppointmentDto dto)
+        public async Task<IActionResult> CreateAppointment([FromBody] CreateAppointmentDto dto)
         {
             // 1. Obtener el ID del Paciente autenticado desde el Token JWT
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -30,7 +83,9 @@ namespace AppointmentAPI.Controllers
                 return Unauthorized(new { message = "Token inválido o usuario no identificado." });
             }
             // 2. Buscar el TimeSlot y verificar que exista y esté libre
-            var timeSlot = await _context.TimeSlots.FirstOrDefaultAsync(ts => ts.Id == dto.TimeSlotId);
+            var timeSlot = await _context.TimeSlots
+                .Include(ts => ts.Doctor)
+                .FirstOrDefaultAsync(ts => ts.Id == dto.TimeSlotId);
             if (timeSlot == null)
             {
                 return NotFound(new { message = "La franja horaria seleccionada no existe." });
@@ -55,7 +110,7 @@ namespace AppointmentAPI.Controllers
                     PatientId = patientId,
                     CreatedAt = DateTime.UtcNow,
                     Status = "Scheduled",
-                    PaymentStatus = "Paid" // En V1 asumimos que el pago pasa directo
+                    PaymentStatus = "Paid"
                 };
 
                 _context.Appointments.Add(appointment);
@@ -77,13 +132,31 @@ namespace AppointmentAPI.Controllers
 
                 // Confirmar todos los cambios en la base de datos de manera atómica
                 await transaction.CommitAsync();
+                // 5. Cargar datos del paciente para mapear la respuesta
+                var patient = await _context.Users.FindAsync(patientId);
 
-                return Ok(new
+                // Generar código de transacción simulado visual
+                string txnCode = "TXN-" + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
+
+                var response = new AppointmentResponseDto
                 {
-                    message = "Cita reservada y pago procesado con éxito de forma simulada.",
-                    appointmentId = appointment.Id,
-                    paymentId = payment.Id
-                });
+                    Id = appointment.Id,
+                    TimeSlotId = timeSlot.Id,
+                    DoctorId = timeSlot.DoctorId,
+                    DoctorName = timeSlot.Doctor?.Name ?? "Doctor",
+                    Specialization = timeSlot.Doctor?.Specialization ?? "General",
+                    PatientId = patientId,
+                    PatientName = patient?.Name ?? "Paciente",
+                    Date = timeSlot.Date.ToString("yyyy-MM-dd"),
+                    StartTime = timeSlot.StartTime.ToString(@"hh\:mm"),
+                    EndTime = timeSlot.EndTime.ToString(@"hh\:mm"),
+                    Status = appointment.Status,
+                    PaymentStatus = appointment.PaymentStatus,
+                    TransactionId = txnCode,
+                    AmountPaid = payment.Amount
+                };
+
+                return CreatedAtAction(nameof(GetAppointmentById), new { id = appointment.Id }, response);
             }
             catch (Exception)
             {

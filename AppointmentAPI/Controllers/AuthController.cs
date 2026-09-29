@@ -92,6 +92,32 @@ namespace AppointmentAPI.Controllers
                 Role = user.Role
             });
         }
+        //only for development
+        [HttpPost("reset-admin-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ResetAdminPassword()
+        {
+            // Reemplaza con el email de tu cuenta Admin
+            var admin = await _context.Users.FirstOrDefaultAsync(u => u.Role == Roles.Admin);
+
+            if (admin == null)
+            {
+                return NotFound(new { message = "No se encontró ningún usuario con rol Admin." });
+            }
+
+            // Usar la misma clase de hashing que usa el Login
+            var hasher = new PasswordHasher<User>();
+            admin.PasswordHash = hasher.HashPassword(admin, "Admin123!");
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Contraseña de Admin reseteada exitosamente en formato Base-64.",
+                email = admin.Email,
+                newPassword = "Admin123!"
+            });
+        }
 
         // --- ENDPOINT PROTEGIDO DE PRUEBA (PP2-23) ---
         [HttpGet("profile")]
