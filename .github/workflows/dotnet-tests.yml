@@ -1,0 +1,31 @@
+name: Backend .NET Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar código del repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Instalar .NET 9 Runtime (para el proyecto de tests)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restaurar dependencias
+        run: dotnet restore
+
+      - name: Ejecutar tests unitarios (xUnit)
+        run: dotnet test --no-restore --verbosity normal
