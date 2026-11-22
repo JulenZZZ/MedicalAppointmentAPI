@@ -3,7 +3,6 @@ using AppointmentAPI.DTOs;
 using AppointmentAPI.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -21,6 +20,7 @@ namespace AppointmentAPI.Controllers
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
         private readonly PasswordHasher<User> _passwordHasher = new();
+
         public AuthController(AppDbContext context, IConfiguration configuration)
         {
             _context = context;
@@ -42,9 +42,10 @@ namespace AppointmentAPI.Controllers
                 Email = request.Email,
                 Role = Roles.Patient,
                 CreatedAt = DateTime.UtcNow,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password)
+                PasswordHash = string.Empty // Satisface el miembro 'required' sin gastar CPU
             };
 
+            // Genera el hash real una sola vez
             user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
 
             _context.Users.Add(user);
@@ -59,7 +60,7 @@ namespace AppointmentAPI.Controllers
         }
 
         [HttpPost("login")]
-        public async Task<IActionResult> Login(LoginDto request)
+        public async Task<IActionResult> Login([FromBody] LoginDto request)
         {
             var user = await _context.Users
                 .FirstOrDefaultAsync(u => u.Email == request.Email);
@@ -79,52 +80,23 @@ namespace AppointmentAPI.Controllers
                 return BadRequest("Invalid credentials");
             }
 
-            // --- GENERAR JWT (PP2-15) ---
             var token = GenerateJwtToken(user);
 
             return Ok(new
             {
                 Message = "Login successful",
-                Token = token, // Devolvemos el token al cliente (Angular)
+                Token = token,
                 UserId = user.Id,
                 Name = user.Name,
                 Email = user.Email,
                 Role = user.Role
             });
         }
-        //only for development
-        [HttpPost("reset-admin-password")]
-        [AllowAnonymous]
-        public async Task<IActionResult> ResetAdminPassword()
-        {
-            // Reemplaza con el email de tu cuenta Admin
-            var admin = await _context.Users.FirstOrDefaultAsync(u => u.Role == Roles.Admin);
 
-            if (admin == null)
-            {
-                return NotFound(new { message = "No se encontró ningún usuario con rol Admin." });
-            }
-
-            // Usar la misma clase de hashing que usa el Login
-            var hasher = new PasswordHasher<User>();
-            admin.PasswordHash = hasher.HashPassword(admin, "Admin123!");
-
-            await _context.SaveChangesAsync();
-
-            return Ok(new
-            {
-                message = "Contraseña de Admin reseteada exitosamente en formato Base-64.",
-                email = admin.Email,
-                newPassword = "Admin123!"
-            });
-        }
-
-        // --- ENDPOINT PROTEGIDO DE PRUEBA (PP2-23) ---
         [HttpGet("profile")]
-        [Authorize] // Restringe el acceso solo a usuarios con un token válido
+        [Authorize]
         public IActionResult GetPerfil()
         {
-            // Podemos extraer los datos del usuario directamente del token que viaja en la petición
             var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var userEmail = User.FindFirst(ClaimTypes.Email)?.Value;
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
@@ -149,13 +121,13 @@ namespace AppointmentAPI.Controllers
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(ClaimTypes.Name, user.Name),
                 new Claim(ClaimTypes.Email, user.Email),
-                new Claim(ClaimTypes.Role, user.Role) // Añade el rol para control de accesos por roles más adelante
+                new Claim(ClaimTypes.Role, user.Role)
             };
 
             var token = new SecurityTokenDescriptor
             {
                 Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.UtcNow.AddHours(2), // El token expira en 2 horas
+                Expires = DateTime.UtcNow.AddHours(2),
                 Issuer = jwtSettings["Issuer"],
                 Audience = jwtSettings["Audience"],
                 SigningCredentials = creds

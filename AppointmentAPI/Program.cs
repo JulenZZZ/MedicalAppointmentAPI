@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
+
 namespace AppointmentAPI
 {
     public class Program
@@ -18,7 +19,12 @@ namespace AppointmentAPI
 
             // --- CONFIGURACIÓN DE LA BASE DE DATOS ---
             builder.Services.AddDbContext<AppDbContext>(options =>
-                options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+                options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
+            sqlOptions => sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,               // Intentará hasta 5 veces
+                maxRetryDelay: TimeSpan.FromSeconds(30), // Tiempo máximo de espera entre reintentos
+                errorNumbersToAdd: null
+            )));
 
             // --- CONFIGURACIÓN DE JWT ---
             var jwtSettings = builder.Configuration.GetSection("Jwt");
@@ -46,12 +52,28 @@ namespace AppointmentAPI
             {
                 options.AddPolicy("AllowFrontend", builder =>
                 {
-                    builder.WithOrigins("http://localhost:4200")
+                    builder.WithOrigins("http://localhost:4200",
+                        "https://yourmed-phi.vercel.app")
                     .AllowAnyMethod()
                     .AllowAnyHeader();
                 });
             });
             var app = builder.Build();
+
+            using (var scope = app.Services.CreateScope())
+            {
+                var services = scope.ServiceProvider;
+                try
+                {
+                    var context = services.GetRequiredService<AppDbContext>();
+                    DbSeeder.SeedAsync(context).GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    var logger = services.GetRequiredService<ILogger<Program>>();
+                    logger.LogError(ex, "An error occurred while seeding the database.");
+                }
+            }
 
             // Ya no hay middlewares de Swagger aquí
 

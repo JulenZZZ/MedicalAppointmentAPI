@@ -62,7 +62,23 @@ namespace AppointmentAPI.Tests
             var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
 
             // Validamos que el mensaje de error devuelto sea el correcto
-            Assert.Contains("Ya existe una franja horaria idéntica", badRequestResult.Value.ToString());
+            Assert.Contains("Ya existe una franja horaria idéntica", badRequestResult.Value?.ToString());
+        }
+        [Fact]
+        public void CreateTimeSlot_ShouldRestrictAccessToAdminOrDoctorRoles()
+        {
+            var method = typeof(TimeSlotsController).GetMethod(nameof(TimeSlotsController.CreateTimeSlot));
+            var authAttr = method?
+                .GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true)
+                .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>()
+                .FirstOrDefault()
+                ?? typeof(TimeSlotsController)
+                    .GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true)
+                    .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>()
+                    .FirstOrDefault();
+
+            Assert.NotNull(authAttr);
+            Assert.Contains("Admin", authAttr!.Roles ?? string.Empty);
         }
     }
 }

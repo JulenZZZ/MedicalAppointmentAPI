@@ -47,6 +47,11 @@ namespace AppointmentAPI.Data
                 .WithMany()
                 .HasForeignKey(a => a.TimeSlotId)
                 .OnDelete(DeleteBehavior.Restrict); // Evita el camino cíclico
+
+            modelBuilder.Entity<Appointment>()
+                .HasIndex(a => a.TimeSlotId)
+                .IsUnique()
+                .HasFilter("[Status] <> 'Cancelled'");
         }
     }
 }

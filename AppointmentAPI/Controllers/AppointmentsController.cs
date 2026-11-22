@@ -21,8 +21,17 @@ namespace AppointmentAPI.Controllers
         }
 
         [HttpGet("{id}")]
+        [Authorize(Roles = $"{Roles.Patient},{Roles.Admin}")]
         public async Task<IActionResult> GetAppointmentById(int id)
         {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var userRoleClaim = User.FindFirst(ClaimTypes.Role)?.Value;
+
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int currentUserId))
+            {
+                return Unauthorized(new { message = "Token inválido o usuario no identificado." });
+            }
+
             var appointment = await _context.Appointments
                 .Include(a => a.TimeSlot)
                 .Include(a => a.Doctor)
@@ -31,7 +40,31 @@ namespace AppointmentAPI.Controllers
 
             if (appointment == null) return NotFound();
 
-            return Ok(appointment);
+            // Evitar IDOR: un paciente solo puede ver sus propias citas
+            if (userRoleClaim == Roles.Patient && appointment.PatientId != currentUserId)
+            {
+                return Forbid();
+            }
+
+            var response = new AppointmentResponseDto
+            {
+                Id = appointment.Id,
+                TimeSlotId = appointment.TimeSlotId,
+                DoctorId = appointment.DoctorId,
+                DoctorName = appointment.Doctor?.Name ?? "Doctor",
+                Specialization = appointment.Doctor?.Specialization ?? "General",
+                PatientId = appointment.PatientId,
+                PatientName = appointment.Patient?.Name ?? "Patient",
+                Date = appointment.TimeSlot?.Date.ToString("yyyy-MM-dd") ?? "",
+                StartTime = appointment.TimeSlot?.StartTime.ToString(@"hh\:mm") ?? "",
+                EndTime = appointment.TimeSlot?.EndTime.ToString(@"hh\:mm") ?? "",
+                Status = appointment.Status,
+                PaymentStatus = appointment.PaymentStatus,
+                TransactionId = "TXN-" + appointment.Id.ToString("D8"),
+                AmountPaid = 50.00m
+            };
+
+            return Ok(response);
         }
 
         [HttpGet("my-appointments")]
@@ -82,10 +115,12 @@ namespace AppointmentAPI.Controllers
             {
                 return Unauthorized(new { message = "Token inválido o usuario no identificado." });
             }
+
             // 2. Buscar el TimeSlot y verificar que exista y esté libre
             var timeSlot = await _context.TimeSlots
                 .Include(ts => ts.Doctor)
                 .FirstOrDefaultAsync(ts => ts.Id == dto.TimeSlotId);
+
             if (timeSlot == null)
             {
                 return NotFound(new { message = "La franja horaria seleccionada no existe." });
@@ -95,44 +130,66 @@ namespace AppointmentAPI.Controllers
             {
                 return BadRequest(new { message = "Esta franja horaria ya ha sido reservada por otro paciente." });
             }
-            // --- INICIO DE LA TRANSACCIÓN LÓGICA ---
-            using var transaction = await _context.Database.BeginTransactionAsync();
+            if (timeSlot.Date.Date < DateTime.UtcNow.Date)
+            {
+                return BadRequest(new { message = "No es posible reservar una franja horaria en una fecha pasada." });
+            }
+
+            Appointment? appointment = null;
+            Payment? payment = null;
+
             try
             {
-                // 3. Modificar el estado de disponibilidad del TimeSlot a falso
-                timeSlot.IsAvailable = false;
+                // --- INICIO DE LA ESTRATEGIA DE EJECUCIÓN Y TRANSACCIÓN ---
+                var strategy = _context.Database.CreateExecutionStrategy();
 
-                // 4. Crear la Cita (Appointment)
-                var appointment = new Appointment
+                await strategy.ExecuteAsync(async () =>
                 {
-                    TimeSlotId = timeSlot.Id,
-                    DoctorId = timeSlot.DoctorId,
-                    PatientId = patientId,
-                    CreatedAt = DateTime.UtcNow,
-                    Status = "Scheduled",
-                    PaymentStatus = "Paid"
-                };
+                    using var transaction = await _context.Database.BeginTransactionAsync();
+                    try
+                    {
+                        // 3. Modificar el estado de disponibilidad del TimeSlot a falso
+                        timeSlot.IsAvailable = false;
 
-                _context.Appointments.Add(appointment);
-                await _context.SaveChangesAsync(); // Guardamos para obtener el Id de la cita generado por la BD
+                        // 4. Crear la Cita (Appointment)
+                        appointment = new Appointment
+                        {
+                            TimeSlotId = timeSlot.Id,
+                            DoctorId = timeSlot.DoctorId,
+                            PatientId = patientId,
+                            CreatedAt = DateTime.UtcNow,
+                            Status = "Scheduled",
+                            PaymentStatus = "Paid"
+                        };
 
-                // 5. Crear el registro del Pago Simulado (Payment) asociado a la cita
-                var payment = new Payment
-                {
-                    AppointmentId = appointment.Id,
-                    Amount = 50.00m, // Tarifa fija simulada (ejemplo: $50.00)
-                    Status = "Paid",
-                    PaymentMethod = "Simulated Card",
-                    CreatedAt = DateTime.UtcNow,
-                    PaidAt = DateTime.UtcNow
-                };
+                        _context.Appointments.Add(appointment);
+                        await _context.SaveChangesAsync(); // Guardamos para obtener el Id de la cita generado por la BD
 
-                _context.Payments.Add(payment);
-                await _context.SaveChangesAsync();
+                        // 5. Crear el registro del Pago Simulado (Payment) asociado a la cita
+                        payment = new Payment
+                        {
+                            AppointmentId = appointment.Id,
+                            Amount = 50.00m, // Tarifa fija simulada (ejemplo: $50.00)
+                            Status = "Paid",
+                            PaymentMethod = "Simulated Card",
+                            CreatedAt = DateTime.UtcNow,
+                            PaidAt = DateTime.UtcNow
+                        };
 
-                // Confirmar todos los cambios en la base de datos de manera atómica
-                await transaction.CommitAsync();
-                // 5. Cargar datos del paciente para mapear la respuesta
+                        _context.Payments.Add(payment);
+                        await _context.SaveChangesAsync();
+
+                        // Confirmar todos los cambios en la base de datos de manera atómica
+                        await transaction.CommitAsync();
+                    }
+                    catch
+                    {
+                        await transaction.RollbackAsync();
+                        throw; // Relanza el error para que EF Core pueda reintentar o pase al catch exterior
+                    }
+                });
+
+                // 6. Cargar datos del paciente para mapear la respuesta (fuera de la transacción)
                 var patient = await _context.Users.FindAsync(patientId);
 
                 // Generar código de transacción simulado visual
@@ -140,7 +197,7 @@ namespace AppointmentAPI.Controllers
 
                 var response = new AppointmentResponseDto
                 {
-                    Id = appointment.Id,
+                    Id = appointment!.Id,
                     TimeSlotId = timeSlot.Id,
                     DoctorId = timeSlot.DoctorId,
                     DoctorName = timeSlot.Doctor?.Name ?? "Doctor",
@@ -153,15 +210,13 @@ namespace AppointmentAPI.Controllers
                     Status = appointment.Status,
                     PaymentStatus = appointment.PaymentStatus,
                     TransactionId = txnCode,
-                    AmountPaid = payment.Amount
+                    AmountPaid = payment!.Amount
                 };
 
                 return CreatedAtAction(nameof(GetAppointmentById), new { id = appointment.Id }, response);
             }
             catch (Exception)
             {
-                // Si algo falla a mitad de camino, revertimos todo para no dejar datos corruptos
-                await transaction.RollbackAsync();
                 return StatusCode(500, new { message = "Ocurrió un error al procesar la reserva de la cita." });
             }
         }
