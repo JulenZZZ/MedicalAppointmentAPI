@@ -22,7 +22,6 @@ namespace AppointmentAPI.Tests
 
             return new AppDbContext(options);
         }
-
         private IConfiguration GetTestConfiguration()
         {
             var inMemorySettings = new Dictionary<string, string?>
