@@ -75,7 +75,6 @@ namespace AppointmentAPI
                 }
             }
 
-            // Ya no hay middlewares de Swagger aquí
 
             app.UseHttpsRedirection();
 

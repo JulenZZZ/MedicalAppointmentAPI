@@ -116,6 +116,7 @@ namespace AppointmentAPI.Controllers
                 return Unauthorized(new { message = "Token inválido o usuario no identificado." });
             }
 
+
             // 2. Buscar el TimeSlot y verificar que exista y esté libre
             var timeSlot = await _context.TimeSlots
                 .Include(ts => ts.Doctor)
@@ -124,6 +125,14 @@ namespace AppointmentAPI.Controllers
             if (timeSlot == null)
             {
                 return NotFound(new { message = "La franja horaria seleccionada no existe." });
+            }
+
+            var nowUtc = DateTime.UtcNow;
+
+            if (timeSlot.Date.Date < nowUtc.Date ||
+               (timeSlot.Date.Date == nowUtc.Date && timeSlot.StartTime <= nowUtc.TimeOfDay))
+            {
+                return BadRequest(new { message = "No es posible reservar una franja horaria en una fecha u hora pasada." });
             }
 
             if (!timeSlot.IsAvailable)
@@ -254,35 +263,46 @@ namespace AppointmentAPI.Controllers
             {
                 return BadRequest(new { message = "Esta cita ya se encuentra cancelada." });
             }
-
             // --- TRANSACCIÓN LÓGICA DE CANCELACIÓN ---
-            using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // A. Cambiar estado de la cita
-                appointment.Status = "Cancelled";
+                var strategy = _context.Database.CreateExecutionStrategy();
 
-                // B. Liberar el horario para que vuelva a estar disponible
-                if (appointment.TimeSlot != null)
+                await strategy.ExecuteAsync(async () =>
                 {
-                    appointment.TimeSlot.IsAvailable = true;
-                }
+                    using var transaction = await _context.Database.BeginTransactionAsync();
+                    try
+                    {
+                        // A. Cambiar estado de la cita
+                        appointment.Status = "Cancelled";
 
-                // C. Buscar el pago asociado y marcarlo como reembolsado
-                var payment = await _context.Payments.FirstOrDefaultAsync(p => p.AppointmentId == appointment.Id);
-                if (payment != null)
-                {
-                    payment.Status = "Refunded";
-                }
+                        // B. Liberar el horario para que vuelva a estar disponible
+                        if (appointment.TimeSlot != null)
+                        {
+                            appointment.TimeSlot.IsAvailable = true;
+                        }
 
-                await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
+                        // C. Buscar el pago asociado y marcarlo como reembolsado
+                        var payment = await _context.Payments.FirstOrDefaultAsync(p => p.AppointmentId == appointment.Id);
+                        if (payment != null)
+                        {
+                            payment.Status = "Refunded";
+                        }
+
+                        await _context.SaveChangesAsync();
+                        await transaction.CommitAsync();
+                    }
+                    catch
+                    {
+                        await transaction.RollbackAsync();
+                        throw;
+                    }
+                });
 
                 return Ok(new { message = "Cita cancelada con éxito. El horario ha sido liberado y el pago reembolsado." });
             }
             catch (Exception)
             {
-                await transaction.RollbackAsync();
                 return StatusCode(500, new { message = "Ocurrió un error al procesar la cancelación." });
             }
         }

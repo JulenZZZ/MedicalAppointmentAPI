@@ -8,7 +8,9 @@ namespace AppointmentAPI.Data
     {
         public static async Task SeedAsync(AppDbContext context)
         {
-            var today = DateTime.UtcNow.Date;
+            var nowUtc = DateTime.UtcNow;
+            var today = nowUtc.Date;
+            var currentTime = nowUtc.TimeOfDay;
 
             var shiftHours = new[]
             {
@@ -289,7 +291,22 @@ namespace AppointmentAPI.Data
                 await context.SaveChangesAsync();
             }
 
-            // 2. AGENDA RODANTE (Rellena horarios futuros para los próximos 4 días si no existen)
+            // 2. LIMPIEZA DE FRANJAS LIBRES CADUCADAS (Evita ofrecer turnos pasados sin borrar historial)
+            var expiredFreeSlots = await context.TimeSlots
+                .Where(ts => ts.IsAvailable &&
+                            (ts.Date.Date < today || (ts.Date.Date == today && ts.StartTime <= currentTime)))
+                .ToListAsync();
+
+            if (expiredFreeSlots.Any())
+            {
+                foreach (var slot in expiredFreeSlots)
+                {
+                    slot.IsAvailable = false;
+                }
+                await context.SaveChangesAsync();
+            }
+
+            // 3. AGENDA RODANTE (Rellena horarios futuros para los próximos 4 días si no existen)
             var activeDoctors = await context.Doctors.Where(d => d.IsActive).ToListAsync();
             var newSlots = new List<TimeSlot>();
 
@@ -299,7 +316,7 @@ namespace AppointmentAPI.Data
                 {
                     var targetDate = today.AddDays(dayOffset);
                     bool hasSlotsForDay = await context.TimeSlots
-                        .AnyAsync(ts => ts.DoctorId == doctor.Id && ts.Date == targetDate);
+                        .AnyAsync(ts => ts.DoctorId == doctor.Id && ts.Date.Date == targetDate);
 
                     if (!hasSlotsForDay)
                     {
