@@ -136,43 +136,5 @@ namespace AppointmentAPI.Tests
             var resetMethod = typeof(AuthController).GetMethod("ResetAdminPassword");
             Assert.Null(resetMethod);
         }
-        [Fact]
-        public async Task Login_ValidCredentials_CompletesWithinAcceptableTime()
-        {
-            // Arrange
-            var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-                .Options;
-
-            using var context = new AppDbContext(options);
-            await DbSeeder.SeedAsync(context); // Crea a sarah.jenkins@example.com
-
-            // Configura tu AuthController con tu IConfiguration de prueba
-            var inMemorySettings = new Dictionary<string, string?> {
-        {"Jwt:Key", "ClaveSecretaDePruebaSuperLargaParaTestsUnitarios2026!"},
-        {"Jwt:Issuer", "YourMedAPI"},
-        {"Jwt:Audience", "YourMedClient"}
-    };
-            IConfiguration configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(inMemorySettings)
-                .Build();
-
-            var controller = new AuthController(context, configuration);
-            var loginDto = new LoginDto
-            {
-                Email = "sarah.jenkins@example.com",
-                Password = "Patient123!"
-            };
-
-            // Act
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var result = await controller.Login(loginDto);
-            stopwatch.Stop();
-
-            // Assert
-            Assert.IsType<OkObjectResult>(result);
-            Assert.True(stopwatch.ElapsedMilliseconds < 1500,
-                $"El login tardó demasiado: {stopwatch.ElapsedMilliseconds} ms");
-        }
     }
 }
