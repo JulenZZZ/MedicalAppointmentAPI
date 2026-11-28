@@ -62,7 +62,7 @@ The relational model is designed to keep scheduling, clinical bookings, and fina
 
 1. **Clone the repository:**
    ```bash
-   git clone [https://github.com/your-username/AppointmentAPI.git](https://github.com/your-username/AppointmentAPI.git)
+   git clone [https://github.com/JulenZZZ/AppointmentAPI.git](https://github.com/JulenZZZ/AppointmentAPI.git)
    cd AppointmentAPI
    ```
    2. **Configure Connection String & JWT:**
